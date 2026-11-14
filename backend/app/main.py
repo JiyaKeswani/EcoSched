@@ -1,10 +1,14 @@
 
-
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from pydantic import BaseModel, Field
 from typing import Literal
 from datetime import datetime
 from uuid import uuid4
+
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
+from app.models import Job
 
 app = FastAPI(
     title="EcoSched API",
@@ -12,8 +16,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Temporary storage for submitted jobs
-jobs = []
+
+# Database session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 # Job request structure
@@ -43,7 +53,7 @@ def home():
     }
 
 
-# Health check endpoint
+# Health check
 @app.get("/health")
 def health_check():
     return {
@@ -51,32 +61,48 @@ def health_check():
     }
 
 
-# Submit a new job
+# Submit a job to PostgreSQL
 @app.post("/jobs")
-def submit_job(job: JobCreate):
+def submit_job(
+    job: JobCreate,
+    db: Session = Depends(get_db)
+):
 
-    new_job = {
-        "id": str(uuid4()),
-        "job_name": job.job_name,
-        "estimated_runtime_minutes": job.estimated_runtime_minutes,
-        "deadline": job.deadline.isoformat(),
-        "preferred_region": job.preferred_region,
-        "scheduling_mode": job.scheduling_mode,
-        "status": "pending"
-    }
+    new_job = Job(
+        id=str(uuid4()),
+        job_name=job.job_name,
+        estimated_runtime_minutes=job.estimated_runtime_minutes,
+        deadline=job.deadline,
+        preferred_region=job.preferred_region,
+        scheduling_mode=job.scheduling_mode,
+        status="pending"
+    )
 
-    jobs.append(new_job)
+    db.add(new_job)
+    db.commit()
+    db.refresh(new_job)
 
     return {
         "message": "Job submitted successfully!",
-        "job": new_job
+        "job": {
+            "id": new_job.id,
+            "job_name": new_job.job_name,
+            "estimated_runtime_minutes": new_job.estimated_runtime_minutes,
+            "deadline": new_job.deadline,
+            "preferred_region": new_job.preferred_region,
+            "scheduling_mode": new_job.scheduling_mode,
+            "status": new_job.status
+        }
     }
 
 
-# Retrieve all submitted jobs
+# Retrieve jobs from PostgreSQL
 @app.get("/jobs")
-def get_jobs():
+def get_jobs(db: Session = Depends(get_db)):
+
+    all_jobs = db.query(Job).all()
+
     return {
-        "total_jobs": len(jobs),
-        "jobs": jobs
+        "total_jobs": len(all_jobs),
+        "jobs": all_jobs
     }
